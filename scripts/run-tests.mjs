@@ -32,7 +32,7 @@ for (const f of files) {
         continue;
     }
     console.log(`\n== ${f}`);
-    const r = spawnSync("npx", ["tsx", f], { stdio: "inherit", shell: true });
+    const r = spawnSync("npx", ["tsx", f], { stdio: "inherit", shell: process.platform === "win32" });
     if (r.status !== 0) failed.push(f);
 }
 const ran = files.length - knownFailing.size;
