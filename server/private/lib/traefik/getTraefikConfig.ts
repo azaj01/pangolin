@@ -71,7 +71,8 @@ import {
 import {
     appendPathMatch,
     buildHostRule,
-    computeRoutePriority
+    computeRoutePriority,
+    ruleValue
 } from "@server/lib/traefik/rule";
 import { buildSiteResourceAliasCertPlaceholders } from "@server/lib/traefik/siteResourceAlias";
 import { ResourceWithTargets } from "@server/lib/traefik/types";
@@ -1189,7 +1190,7 @@ export async function getTraefikConfig(
                 const srKey = `inference-sr${sr.siteResourceId}`;
                 const routerName = `${srKey}-router`;
                 const serviceName = `${srKey}-service`;
-                const rule = `Host(\`${fullDomain}\`) && ClientIP(\`${exitNode.address}\`)`; // restrict to coming from the exit node ip range that the client is connected to
+                const rule = `${buildHostRule(fullDomain)} && ClientIP(${ruleValue(exitNode.address)})`; // restrict to coming from the exit node ip range that the client is connected to
 
                 let tls: any = {};
                 if (!pangolinCertModeEnabled) {
@@ -1345,7 +1346,7 @@ export async function getTraefikConfig(
                     ],
                     middlewares: [landingRateLimitMiddlewareName],
                     service: "landing-service",
-                    rule: `Host(\`${fullDomain}\`) && (PathRegexp(\`^/auth/resource/[^/]+$\`) || PathRegexp(\`^/auth/idp/[0-9]+/oidc/callback\`) || PathPrefix(\`/_next\`) || Path(\`/auth/org\`) || PathRegexp(\`^/__nextjs*\`) || Path(\`/favicon.ico\`))`,
+                    rule: `${buildHostRule(fullDomain)} && (PathRegexp(\`^/auth/resource/[^/]+$\`) || PathRegexp(\`^/auth/idp/[0-9]+/oidc/callback\`) || PathPrefix(\`/_next\`) || Path(\`/auth/org\`) || PathRegexp(\`^/__nextjs*\`) || Path(\`/favicon.ico\`))`,
                     priority: 203,
                     tls: tls
                 };
@@ -1367,7 +1368,7 @@ export async function getTraefikConfig(
                         redirectToRootMiddlewareName
                     ],
                     service: "landing-service",
-                    rule: `Host(\`${fullDomain}\`)`,
+                    rule: buildHostRule(fullDomain),
                     priority: 202,
                     tls: tls
                 };
@@ -1379,7 +1380,7 @@ export async function getTraefikConfig(
                     ],
                     middlewares: [redirectHttpsMiddlewareName],
                     service: "landing-service",
-                    rule: `Host(\`${fullDomain}\`)`,
+                    rule: buildHostRule(fullDomain),
                     priority: 201
                 };
             }
