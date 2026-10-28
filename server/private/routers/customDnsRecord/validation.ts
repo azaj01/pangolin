@@ -47,13 +47,15 @@ const TXT_REGEX = /^[\x20-\x7e]+$/;
 
 const uint16 = z.number().int().min(0).max(65535);
 
+export const customDnsRecordValueSchema = z
+    .string()
+    .min(1)
+    .max(MAX_TXT_VALUE_LENGTH + 2); // + surrounding quotes
+
 export const customDnsRecordFieldsSchema = z.strictObject({
     name: z.string().max(253),
     type: z.enum(CUSTOM_DNS_RECORD_TYPES),
-    value: z
-        .string()
-        .min(1)
-        .max(MAX_TXT_VALUE_LENGTH + 2), // + surrounding quotes
+    value: customDnsRecordValueSchema,
     ttl: z.number().int().min(MIN_TTL).max(MAX_TTL),
     priority: uint16.nullable().optional(),
     weight: uint16.nullable().optional(),
@@ -341,12 +343,15 @@ export function normalizeCustomDnsRecord(
 
 // Checks a normalized record against everything else that lives in DNS:
 // infrastructure zones, other customers' zones, Pangolin-managed names and
-// the domain's other custom records. Returns an error message, or null.
+// the domain's other custom records. `pending` holds records being created
+// alongside this one in the same request, which count as existing. Returns
+// an error message, or null.
 export async function checkCustomDnsRecordConflicts(
     domainId: string,
     baseDomain: string,
     record: NormalizedCustomDnsRecord,
-    excludeRecordId?: number
+    excludeRecordId?: number,
+    pending: NormalizedCustomDnsRecord[] = []
 ): Promise<string | null> {
     const { fullDomain, type } = record;
 
@@ -384,12 +389,15 @@ export async function checkCustomDnsRecordConflicts(
         }
     }
 
-    const existing = (
-        await db
-            .select()
-            .from(customDnsRecords)
-            .where(eq(customDnsRecords.domainId, domainId))
-    ).filter((r) => r.customDnsRecordId !== excludeRecordId);
+    const existing = [
+        ...(
+            await db
+                .select()
+                .from(customDnsRecords)
+                .where(eq(customDnsRecords.domainId, domainId))
+        ).filter((r) => r.customDnsRecordId !== excludeRecordId),
+        ...pending
+    ];
 
     if (
         excludeRecordId === undefined &&

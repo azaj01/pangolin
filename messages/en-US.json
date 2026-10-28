@@ -3748,6 +3748,7 @@
     "customDnsRecordEdit": "Edit DNS Record",
     "customDnsRecordFormDescription": "This record will be served for {domain}. Changes may take a few minutes to propagate.",
     "customDnsRecordNameDescription": "Use @ for the root of the domain or * as the first label for a wildcard.",
+    "customDnsRecordValueDescription": "Enter one value per line to add multiple records with this name, e.g. two nameservers.",
     "customDnsRecordPriority": "Priority",
     "customDnsRecordWeight": "Weight",
     "customDnsRecordPort": "Port",

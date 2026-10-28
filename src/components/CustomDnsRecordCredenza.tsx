@@ -128,10 +128,16 @@ export default function CustomDnsRecordCredenza({
 
     async function onSubmit(data: FormValues) {
         setLoading(true);
+        // When creating, each non-empty line becomes its own record
+        const values = data.value
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0);
+
         const payload = {
             type: data.type,
             name: data.name,
-            value: data.value,
+            ...(record ? { value: data.value } : { values }),
             ttl: data.ttl,
             priority: needsPriority ? (data.priority ?? null) : null,
             weight: isSrv ? (data.weight ?? null) : null,
@@ -290,7 +296,7 @@ export default function CustomDnsRecordCredenza({
                                     <FormItem>
                                         <FormLabel>{t("value")}</FormLabel>
                                         <FormControl>
-                                            {type === "TXT" ? (
+                                            {!record || type === "TXT" ? (
                                                 <Textarea
                                                     autoComplete="off"
                                                     placeholder={
@@ -308,6 +314,13 @@ export default function CustomDnsRecordCredenza({
                                                 />
                                             )}
                                         </FormControl>
+                                        {!record && (
+                                            <FormDescription>
+                                                {t(
+                                                    "customDnsRecordValueDescription"
+                                                )}
+                                            </FormDescription>
+                                        )}
                                         <FormMessage />
                                     </FormItem>
                                 )}

@@ -21,7 +21,7 @@ import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { OpenAPITags, registry } from "@server/openApi";
 import { and, eq } from "drizzle-orm";
-import { CreateOrUpdateCustomDnsRecordResponse } from "@server/routers/customDnsRecord/types";
+import { UpdateCustomDnsRecordResponse } from "@server/routers/customDnsRecord/types";
 import {
     checkCustomDnsRecordConflicts,
     customDnsRecordFieldsSchema,
@@ -169,7 +169,7 @@ export async function updateCustomDnsRecord(
             )
             .returning();
 
-        return response<CreateOrUpdateCustomDnsRecordResponse>(res, {
+        return response<UpdateCustomDnsRecordResponse>(res, {
             data: record,
             success: true,
             error: false,

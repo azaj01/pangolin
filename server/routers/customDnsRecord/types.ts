@@ -30,4 +30,8 @@ export type ListCustomDnsRecordsResponse = {
     records: CustomDnsRecordRow[];
 };
 
-export type CreateOrUpdateCustomDnsRecordResponse = CustomDnsRecordRow;
+export type CreateCustomDnsRecordsResponse = {
+    records: CustomDnsRecordRow[];
+};
+
+export type UpdateCustomDnsRecordResponse = CustomDnsRecordRow;
