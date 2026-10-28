@@ -41,6 +41,36 @@ export const dnsChallenge = pgTable("dnsChallenges", {
     completed: boolean("completed").default(false)
 });
 
+// User-defined records served by the authoritative DNS server for a domain
+// delegated to Pangolin (type "ns"). fullDomain is the lowercase FQDN without
+// a trailing dot, precomputed so the DNS server can look records up directly.
+export const customDnsRecords = pgTable(
+    "customDnsRecords",
+    {
+        customDnsRecordId: serial("customDnsRecordId").primaryKey(),
+        domainId: varchar("domainId")
+            .notNull()
+            .references(() => domains.domainId, { onDelete: "cascade" }),
+        name: varchar("name", { length: 255 }).notNull(), // relative to the domain, "@" for the apex
+        fullDomain: varchar("fullDomain", { length: 255 }).notNull(),
+        type: varchar("type", { length: 10 })
+            .$type<"A" | "AAAA" | "CNAME" | "MX" | "NS" | "SRV" | "TXT">()
+            .notNull(),
+        values: text("values").notNull(), // JSON array of strings, one resource record each
+        ttl: integer("ttl").notNull().default(300),
+        priority: integer("priority"), // MX and SRV
+        weight: integer("weight"), // SRV
+        port: integer("port"), // SRV
+        enabled: boolean("enabled").notNull().default(true),
+        createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+        updatedAt: bigint("updatedAt", { mode: "number" }).notNull()
+    },
+    (t) => [
+        index("idx_customDnsRecords_fullDomain").on(t.fullDomain),
+        index("idx_customDnsRecords_domainId").on(t.domainId)
+    ]
+);
+
 export const account = pgTable("account", {
     accountId: serial("accountId").primaryKey(),
     userId: varchar("userId")
@@ -701,6 +731,7 @@ export type Approval = InferSelectModel<typeof approvals>;
 export type Limit = InferSelectModel<typeof limits>;
 export type Account = InferSelectModel<typeof account>;
 export type DnsChallenge = InferSelectModel<typeof dnsChallenge>;
+export type CustomDnsRecord = InferSelectModel<typeof customDnsRecords>;
 export type Customer = InferSelectModel<typeof customers>;
 export type Subscription = InferSelectModel<typeof subscriptions>;
 export type SubscriptionItem = InferSelectModel<typeof subscriptionItems>;

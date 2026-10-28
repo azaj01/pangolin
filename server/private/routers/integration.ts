@@ -22,8 +22,10 @@ import * as eventStreamingDestination from "#private/routers/eventStreamingDesti
 import * as alertRule from "#private/routers/alertRule";
 import * as healthChecks from "#private/routers/healthChecks";
 import * as resource from "#private/routers/resource";
+import * as customDnsRecord from "#private/routers/customDnsRecord";
 import {
     verifyApiKeyHasAction,
+    verifyApiKeyDomainAccess,
     verifyApiKeyIsRoot,
     verifyApiKeyOrgAccess,
     verifyApiKeyIdpAccess,
@@ -177,6 +179,49 @@ authenticated.get(
     verifyApiKeyHasAction(ActionsEnum.exportLogs),
     logActionAudit(ActionsEnum.exportLogs),
     exportAiSessionLogs
+);
+
+authenticated.get(
+    "/org/:orgId/domain/:domainId/custom-dns-records",
+    verifyValidLicense,
+    verifyApiKeyOrgAccess,
+    verifyApiKeyDomainAccess,
+    verifyApiKeyHasAction(ActionsEnum.listCustomDnsRecords),
+    customDnsRecord.listCustomDnsRecords
+);
+
+authenticated.put(
+    "/org/:orgId/domain/:domainId/custom-dns-record",
+    verifyValidLicense,
+    verifyValidSubscription(tierMatrix.customDnsRecords),
+    verifyApiKeyOrgAccess,
+    verifyApiKeyDomainAccess,
+    verifyLimits,
+    verifyApiKeyHasAction(ActionsEnum.createCustomDnsRecord),
+    logActionAudit(ActionsEnum.createCustomDnsRecord),
+    customDnsRecord.createCustomDnsRecord
+);
+
+authenticated.post(
+    "/org/:orgId/domain/:domainId/custom-dns-record/:customDnsRecordId",
+    verifyValidLicense,
+    verifyValidSubscription(tierMatrix.customDnsRecords),
+    verifyApiKeyOrgAccess,
+    verifyApiKeyDomainAccess,
+    verifyApiKeyHasAction(ActionsEnum.updateCustomDnsRecord),
+    logActionAudit(ActionsEnum.updateCustomDnsRecord),
+    customDnsRecord.updateCustomDnsRecord
+);
+
+authenticated.delete(
+    "/org/:orgId/domain/:domainId/custom-dns-record/:customDnsRecordId",
+    verifyValidLicense,
+    verifyValidSubscription(tierMatrix.customDnsRecords),
+    verifyApiKeyOrgAccess,
+    verifyApiKeyDomainAccess,
+    verifyApiKeyHasAction(ActionsEnum.deleteCustomDnsRecord),
+    logActionAudit(ActionsEnum.deleteCustomDnsRecord),
+    customDnsRecord.deleteCustomDnsRecord
 );
 
 authenticated.put(

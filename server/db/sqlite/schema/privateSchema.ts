@@ -37,6 +37,40 @@ export const dnsChallenge = sqliteTable("dnsChallenges", {
     completed: integer("completed", { mode: "boolean" }).default(false)
 });
 
+// User-defined records served by the authoritative DNS server for a domain
+// delegated to Pangolin (type "ns"). fullDomain is the lowercase FQDN without
+// a trailing dot, precomputed so the DNS server can look records up directly.
+export const customDnsRecords = sqliteTable(
+    "customDnsRecords",
+    {
+        customDnsRecordId: integer("customDnsRecordId").primaryKey({
+            autoIncrement: true
+        }),
+        domainId: text("domainId")
+            .notNull()
+            .references(() => domains.domainId, { onDelete: "cascade" }),
+        name: text("name").notNull(), // relative to the domain, "@" for the apex
+        fullDomain: text("fullDomain").notNull(),
+        type: text("type")
+            .$type<"A" | "AAAA" | "CNAME" | "MX" | "NS" | "SRV" | "TXT">()
+            .notNull(),
+        values: text("values").notNull(), // JSON array of strings, one resource record each
+        ttl: integer("ttl").notNull().default(300),
+        priority: integer("priority"), // MX and SRV
+        weight: integer("weight"), // SRV
+        port: integer("port"), // SRV
+        enabled: integer("enabled", { mode: "boolean" })
+            .notNull()
+            .default(true),
+        createdAt: integer("createdAt").notNull(),
+        updatedAt: integer("updatedAt").notNull()
+    },
+    (t) => [
+        index("idx_customDnsRecords_fullDomain").on(t.fullDomain),
+        index("idx_customDnsRecords_domainId").on(t.domainId)
+    ]
+);
+
 export const account = sqliteTable("account", {
     accountId: integer("accountId").primaryKey({ autoIncrement: true }),
     userId: text("userId")
@@ -700,6 +734,7 @@ export type Approval = InferSelectModel<typeof approvals>;
 export type Limit = InferSelectModel<typeof limits>;
 export type Account = InferSelectModel<typeof account>;
 export type DnsChallenge = InferSelectModel<typeof dnsChallenge>;
+export type CustomDnsRecord = InferSelectModel<typeof customDnsRecords>;
 export type Customer = InferSelectModel<typeof customers>;
 export type Subscription = InferSelectModel<typeof subscriptions>;
 export type SubscriptionItem = InferSelectModel<typeof subscriptionItems>;

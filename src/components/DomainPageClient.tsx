@@ -10,6 +10,7 @@ import RestartDomainButton from "@app/components/RestartDomainButton";
 import RefreshButton from "@app/components/RefreshButton";
 import SettingsSectionTitle from "@app/components/SettingsSectionTitle";
 import DomainCertForm from "@app/components/DomainCertForm";
+import CustomDnsRecordsTable from "@app/components/CustomDnsRecordsTable";
 import { build } from "@server/build";
 import { useEnvContext } from "@app/hooks/useEnvContext";
 import { useTranslations } from "next-intl";
@@ -96,6 +97,18 @@ export default function DomainPageClient({
                     }))}
                     type={domain.type}
                 />
+
+                {build !== "oss" &&
+                    env.flags.usePangolinDns &&
+                    !env.flags.disableEnterpriseFeatures &&
+                    domain.type === "ns" && (
+                        <CustomDnsRecordsTable
+                            orgId={orgId}
+                            domainId={domain.domainId}
+                            baseDomain={domain.baseDomain}
+                            verified={domain.verified}
+                        />
+                    )}
 
                 {domain.type === "wildcard" && !domain.configManaged && (
                     <DomainCertForm
