@@ -3,24 +3,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Pencil, Plus, Trash2 } from "lucide-react";
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow
-} from "@app/components/ui/table";
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle
-} from "@app/components/ui/card";
+import { ArrowUpDown, MoreHorizontal } from "lucide-react";
+import { DataTable, ExtendedColumnDef } from "@app/components/ui/data-table";
 import { Button } from "@app/components/ui/button";
+import { Badge } from "@app/components/ui/badge";
 import { Switch } from "@app/components/ui/switch";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger
+} from "@app/components/ui/dropdown-menu";
 import CopyToClipboard from "@app/components/CopyToClipboard";
 import ConfirmDeleteDialog from "@app/components/ConfirmDeleteDialog";
 import CustomDnsRecordCredenza from "@app/components/CustomDnsRecordCredenza";
@@ -59,9 +52,11 @@ export default function CustomDnsRecordsTable({
     const { isPaidUser } = usePaidStatus();
     const isDisabled = !isPaidUser(tierMatrix.customDnsRecords);
 
-    const { data: records = [], refetch } = useQuery(
-        domainQueries.listCustomDnsRecords({ orgId, domainId })
-    );
+    const {
+        data: records = [],
+        isRefetching,
+        refetch
+    } = useQuery(domainQueries.listCustomDnsRecords({ orgId, domainId }));
 
     const [editorOpen, setEditorOpen] = useState(false);
     const [editingRecord, setEditingRecord] =
@@ -112,122 +107,148 @@ export default function CustomDnsRecordsTable({
         }
     }
 
+    const columns: ExtendedColumnDef<CustomDnsRecordRow>[] = [
+        {
+            accessorKey: "fullDomain",
+            enableHiding: false,
+            friendlyName: t("name"),
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        onClick={() =>
+                            column.toggleSorting(column.getIsSorted() === "asc")
+                        }
+                    >
+                        {t("name")}
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                    </Button>
+                );
+            },
+            cell: ({ row }) => {
+                const fullDomain = row.original.fullDomain;
+                return (
+                    <CopyToClipboard
+                        text={fullDomain}
+                        displayText={fullDomain}
+                        isLink={false}
+                    />
+                );
+            }
+        },
+        {
+            accessorKey: "type",
+            friendlyName: t("type"),
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        onClick={() =>
+                            column.toggleSorting(column.getIsSorted() === "asc")
+                        }
+                    >
+                        {t("type")}
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                    </Button>
+                );
+            },
+            cell: ({ row }) => {
+                return <Badge variant="secondary">{row.original.type}</Badge>;
+            }
+        },
+        {
+            accessorKey: "value",
+            friendlyName: t("value"),
+            header: () => <span className="p-3">{t("value")}</span>,
+            cell: ({ row }) => {
+                return (
+                    <span className="block max-w-md break-all">
+                        {formatValue(row.original)}
+                    </span>
+                );
+            }
+        },
+        {
+            accessorKey: "ttl",
+            friendlyName: t("TTL"),
+            header: ({ column }) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        onClick={() =>
+                            column.toggleSorting(column.getIsSorted() === "asc")
+                        }
+                    >
+                        {t("TTL")}
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                    </Button>
+                );
+            }
+        },
+        {
+            accessorKey: "enabled",
+            friendlyName: t("enabled"),
+            header: () => <span className="p-3">{t("enabled")}</span>,
+            cell: ({ row }) => {
+                const record = row.original;
+                return (
+                    <Switch
+                        checked={record.enabled}
+                        disabled={isDisabled}
+                        onCheckedChange={(checked) =>
+                            toggleEnabled(record, checked)
+                        }
+                    />
+                );
+            }
+        },
+        {
+            id: "actions",
+            enableHiding: false,
+            header: () => <span className="p-3"></span>,
+            cell: ({ row }) => {
+                const record = row.original;
+                return (
+                    <div className="flex items-center gap-2 justify-end">
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" className="h-8 w-8 p-0">
+                                    <span className="sr-only">
+                                        {t("openMenu")}
+                                    </span>
+                                    <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                    disabled={isDisabled}
+                                    onClick={() => {
+                                        setDeletingRecord(record);
+                                        setDeleteOpen(true);
+                                    }}
+                                >
+                                    <span className="text-red-500">
+                                        {t("delete")}
+                                    </span>
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                        <Button
+                            variant="outline"
+                            disabled={isDisabled}
+                            onClick={() => openEditor(record)}
+                        >
+                            {t("edit")}
+                        </Button>
+                    </div>
+                );
+            }
+        }
+    ];
+
     return (
         <>
             <PaidFeaturesAlert tiers={tierMatrix.customDnsRecords} />
-            <Card
-                className={
-                    isDisabled ? "pointer-events-none opacity-50" : undefined
-                }
-            >
-                <CardHeader className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0 pb-4">
-                    <div className="space-y-1">
-                        <CardTitle>{t("customDnsRecords")}</CardTitle>
-                        <CardDescription>
-                            {t("customDnsRecordsDescription")}
-                        </CardDescription>
-                    </div>
-                    <Button
-                        onClick={() => openEditor(null)}
-                        disabled={isDisabled}
-                    >
-                        <Plus className="h-4 w-4 mr-1" />
-                        {t("customDnsRecordsAdd")}
-                    </Button>
-                </CardHeader>
-                <CardContent>
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>{t("name")}</TableHead>
-                                <TableHead>{t("type")}</TableHead>
-                                <TableHead>{t("value")}</TableHead>
-                                <TableHead>{t("TTL")}</TableHead>
-                                <TableHead>{t("enabled")}</TableHead>
-                                <TableHead className="text-right">
-                                    {t("actions")}
-                                </TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {records.length ? (
-                                records.map((record) => (
-                                    <TableRow key={record.customDnsRecordId}>
-                                        <TableCell>
-                                            <CopyToClipboard
-                                                text={record.fullDomain}
-                                                displayText={record.fullDomain}
-                                                isLink={false}
-                                            />
-                                        </TableCell>
-                                        <TableCell>{record.type}</TableCell>
-                                        <TableCell className="max-w-md break-all">
-                                            {formatValue(record)}
-                                        </TableCell>
-                                        <TableCell>{record.ttl}</TableCell>
-                                        <TableCell>
-                                            <Switch
-                                                checked={record.enabled}
-                                                disabled={isDisabled}
-                                                onCheckedChange={(checked) =>
-                                                    toggleEnabled(
-                                                        record,
-                                                        checked
-                                                    )
-                                                }
-                                            />
-                                        </TableCell>
-                                        <TableCell className="text-right">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                aria-label={t("edit")}
-                                                disabled={isDisabled}
-                                                onClick={() =>
-                                                    openEditor(record)
-                                                }
-                                            >
-                                                <Pencil className="h-4 w-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                aria-label={t("delete")}
-                                                disabled={isDisabled}
-                                                onClick={() => {
-                                                    setDeletingRecord(record);
-                                                    setDeleteOpen(true);
-                                                }}
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </TableCell>
-                                    </TableRow>
-                                ))
-                            ) : (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={6}
-                                        className="h-24 text-center"
-                                    >
-                                        {t("customDnsRecordsEmpty")}
-                                    </TableCell>
-                                </TableRow>
-                            )}
-                        </TableBody>
-                    </Table>
-                </CardContent>
-            </Card>
-
-            <CustomDnsRecordCredenza
-                open={editorOpen && !isDisabled}
-                setOpen={setEditorOpen}
-                orgId={orgId}
-                domainId={domainId}
-                baseDomain={baseDomain}
-                record={editingRecord}
-                onSaved={() => refetch()}
-            />
 
             {deletingRecord && !isDisabled && (
                 <ConfirmDeleteDialog
@@ -252,6 +273,33 @@ export default function CustomDnsRecordsTable({
                     onConfirm={deleteRecord}
                 />
             )}
+
+            <CustomDnsRecordCredenza
+                open={editorOpen && !isDisabled}
+                setOpen={setEditorOpen}
+                orgId={orgId}
+                domainId={domainId}
+                baseDomain={baseDomain}
+                record={editingRecord}
+                onSaved={() => refetch()}
+            />
+
+            <DataTable
+                columns={columns}
+                data={records}
+                persistPageSize="custom-dns-records-table"
+                title={t("customDnsRecords")}
+                searchPlaceholder={t("customDnsRecordsSearch")}
+                searchColumn="fullDomain"
+                addButtonText={t("customDnsRecordsAdd")}
+                onAdd={() => openEditor(null)}
+                addButtonDisabled={isDisabled}
+                onRefresh={refetch}
+                isRefreshing={isRefetching}
+                enableColumnVisibility={true}
+                stickyLeftColumn="fullDomain"
+                stickyRightColumn="actions"
+            />
         </>
     );
 }
