@@ -38,6 +38,11 @@ import * as dnsResolver from "dns";
 import logger from "@server/logger";
 import { listExitNodes } from "../exitNodes";
 import { parseCustomDnsRecordValues } from "@server/routers/customDnsRecord/types";
+import {
+    matchCustomRecords,
+    type CustomRecordMatch,
+    type CustomZoneRecord
+} from "./customRecordMatch";
 import { rateLimitService } from "../rateLimit";
 import license from "#private/license/license";
 
@@ -499,9 +504,10 @@ export class AuthoritativeDNSServer {
 
         // User-defined records come after everything Pangolin manages itself,
         // so they can never shadow a resource, login page or redirect.
-        const customRecords = isCustomerZone
+        const customMatch: CustomRecordMatch<CustomRecord> = isCustomerZone
             ? await this.getCustomRecords(queryName, baseDomain!)
-            : [];
+            : { records: [], nameExists: false };
+        const customRecords = customMatch.records;
 
         if (customRecords.length > 0) {
             let matchingRecords = customRecords.filter(
@@ -532,7 +538,7 @@ export class AuthoritativeDNSServer {
             this.domainExists(queryName, baseDomain!),
             this.getSOARecord(baseDomain!)
         ]);
-        const domainExists = resourceExists || customRecords.length > 0;
+        const domainExists = resourceExists || customMatch.nameExists;
 
         if (!domainExists) {
             // NXDOMAIN: Name does not exist
@@ -1222,80 +1228,87 @@ export class AuthoritativeDNSServer {
         }
     }
 
-    // User-defined records for `name`. Only served when the record's domain
-    // is the zone this query resolved to and is a verified NS delegation, so
-    // records can never surface under another org's zone or a domain whose
-    // ownership hasn't been proven. An exact name match takes precedence over
-    // a wildcard (RFC 4592).
+    // User-defined records for `name`, plus whether the name exists among
+    // them (see matchCustomRecords for how wildcards apply).
     private async getCustomRecords(
         name: string,
         zone: string
-    ): Promise<CustomRecord[]> {
-        const normalized = name.replace(/\.$/, "").toLowerCase();
-        const cacheKey = `customRecords:${zone}:${normalized}`;
+    ): Promise<CustomRecordMatch<CustomRecord>> {
+        const match = matchCustomRecords(
+            await this.getCustomZoneRecords(zone),
+            name,
+            zone
+        );
+        return {
+            // Each stored value is served as its own resource record
+            records: match.records.flatMap(
+                ({ fullDomain, values, ...record }) =>
+                    values.map((value) => ({ ...record, value }))
+            ),
+            nameExists: match.nameExists
+        };
+    }
 
-        const cached = this.cache.get<CustomRecord[]>(cacheKey);
+    // All enabled custom records of `zone`. Only loaded when the zone is a
+    // verified NS delegation, so records can never surface under another
+    // org's zone or a domain whose ownership hasn't been proven. Loaded
+    // whole (a domain has at most 100) since wildcard matching needs to know
+    // every name that exists in the zone.
+    private async getCustomZoneRecords(
+        zone: string
+    ): Promise<CustomZoneRecord[]> {
+        const cacheKey = `customZoneRecords:${zone}`;
+
+        const cached = this.cache.get<CustomZoneRecord[]>(cacheKey);
         if (cached !== undefined) {
             return cached;
         }
 
-        return this.withInFlightDedup<CustomRecord[]>(cacheKey, async () => {
-            try {
-                const wildcardPattern = this.getWildcardPattern(normalized);
-                const names =
-                    wildcardPattern && wildcardPattern !== normalized
-                        ? [normalized, wildcardPattern]
-                        : [normalized];
-
-                const rows = await db
-                    .select({
-                        fullDomain: customDnsRecords.fullDomain,
-                        type: customDnsRecords.type,
-                        values: customDnsRecords.values,
-                        ttl: customDnsRecords.ttl,
-                        priority: customDnsRecords.priority,
-                        weight: customDnsRecords.weight,
-                        port: customDnsRecords.port
-                    })
-                    .from(customDnsRecords)
-                    .innerJoin(
-                        domains,
-                        eq(domains.domainId, customDnsRecords.domainId)
-                    )
-                    .where(
-                        and(
-                            inArray(customDnsRecords.fullDomain, names),
-                            eq(customDnsRecords.enabled, true),
-                            eq(domains.baseDomain, zone),
-                            eq(domains.type, "ns"),
-                            eq(domains.verified, true)
+        return this.withInFlightDedup<CustomZoneRecord[]>(
+            cacheKey,
+            async () => {
+                try {
+                    const rows = await db
+                        .select({
+                            fullDomain: customDnsRecords.fullDomain,
+                            type: customDnsRecords.type,
+                            values: customDnsRecords.values,
+                            ttl: customDnsRecords.ttl,
+                            priority: customDnsRecords.priority,
+                            weight: customDnsRecords.weight,
+                            port: customDnsRecords.port
+                        })
+                        .from(customDnsRecords)
+                        .innerJoin(
+                            domains,
+                            eq(domains.domainId, customDnsRecords.domainId)
                         )
+                        .where(
+                            and(
+                                eq(customDnsRecords.enabled, true),
+                                eq(domains.baseDomain, zone),
+                                eq(domains.type, "ns"),
+                                eq(domains.verified, true)
+                            )
+                        );
+
+                    const result: CustomZoneRecord[] = rows.map((row) => ({
+                        ...row,
+                        values: parseCustomDnsRecordValues(row.values)
+                    }));
+
+                    this.cache.set(
+                        cacheKey,
+                        result,
+                        CUSTOM_RECORD_CACHE_TTL_SECONDS
                     );
-
-                const exactRows = rows.filter(
-                    (row) => row.fullDomain === normalized
-                );
-                // Each stored value is served as its own resource record
-                const result: CustomRecord[] = (
-                    exactRows.length > 0 ? exactRows : rows
-                ).flatMap(({ fullDomain, values, ...record }) =>
-                    parseCustomDnsRecordValues(values).map((value) => ({
-                        ...record,
-                        value
-                    }))
-                );
-
-                this.cache.set(
-                    cacheKey,
-                    result,
-                    CUSTOM_RECORD_CACHE_TTL_SECONDS
-                );
-                return result;
-            } catch (error) {
-                logger.error("Error querying custom DNS records:", error);
-                return [];
+                    return result;
+                } catch (error) {
+                    logger.error("Error querying custom DNS records:", error);
+                    return [];
+                }
             }
-        });
+        );
     }
 
     // Finds the user-defined delegation (NS records on a subdomain) that
@@ -1414,7 +1427,9 @@ export class AuthoritativeDNSServer {
             ) {
                 continue;
             }
-            const glue = (await this.getCustomRecords(target, zone)).filter(
+            const glue = (
+                await this.getCustomRecords(target, zone)
+            ).records.filter(
                 (record) => record.type === "A" || record.type === "AAAA"
             );
             additionals.push(
