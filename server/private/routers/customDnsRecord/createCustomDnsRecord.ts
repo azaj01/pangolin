@@ -20,14 +20,14 @@ import createHttpError from "http-errors";
 import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { OpenAPITags, registry } from "@server/openApi";
-import { CreateCustomDnsRecordsResponse } from "@server/routers/customDnsRecord/types";
+import {
+    CreateOrUpdateCustomDnsRecordResponse,
+    toCustomDnsRecordRow
+} from "@server/routers/customDnsRecord/types";
 import {
     checkCustomDnsRecordConflicts,
     customDnsRecordFieldsSchema,
-    customDnsRecordValueSchema,
     getManageableDomain,
-    MAX_CUSTOM_DNS_RECORDS_PER_RRSET,
-    NormalizedCustomDnsRecord,
     normalizeCustomDnsRecord
 } from "./validation";
 
@@ -36,31 +36,16 @@ const paramsSchema = z.strictObject({
     domainId: z.string().nonempty()
 });
 
-// Either `value` for a single record, or `values` to create several records
-// with the same name and settings at once (e.g. a pair of NS records).
-const bodySchema = customDnsRecordFieldsSchema
-    .extend({
-        value: customDnsRecordValueSchema.optional(),
-        values: z
-            .array(customDnsRecordValueSchema)
-            .min(1)
-            .max(MAX_CUSTOM_DNS_RECORDS_PER_RRSET)
-            .optional(),
-        ttl: customDnsRecordFieldsSchema.shape.ttl.optional().default(300),
-        enabled: z.boolean().optional().default(true)
-    })
-    .refine(
-        (body) => (body.value === undefined) !== (body.values === undefined),
-        {
-            message: "Exactly one of value or values must be provided"
-        }
-    );
+const bodySchema = customDnsRecordFieldsSchema.extend({
+    ttl: customDnsRecordFieldsSchema.shape.ttl.optional().default(300),
+    enabled: z.boolean().optional().default(true)
+});
 
 registry.registerPath({
     method: "put",
     path: "/org/{orgId}/domain/{domainId}/custom-dns-record",
     description:
-        "Create one or more custom DNS records served by Pangolin's nameservers for a domain. Pass `values` instead of `value` to create several records with the same name and settings.",
+        "Create a custom DNS record served by Pangolin's nameservers for a domain. Each entry in `values` is served as a separate resource record (e.g. both nameservers of an NS record).",
     tags: [OpenAPITags.Domain],
     request: {
         params: paramsSchema,
@@ -123,57 +108,42 @@ export async function createCustomDnsRecord(
             return next(createHttpError(domain.status, domain.error));
         }
 
-        const { value, values, ...fields } = parsedBody.data;
-
-        // Validate every record (against the existing ones and each other)
-        // before inserting any, so a bad value doesn't leave a partial batch.
-        const toInsert: NormalizedCustomDnsRecord[] = [];
-        for (const recordValue of values ?? [value!]) {
-            const normalized = normalizeCustomDnsRecord(
-                { ...fields, value: recordValue },
-                domain.baseDomain
+        const normalized = normalizeCustomDnsRecord(
+            parsedBody.data,
+            domain.baseDomain
+        );
+        if (!normalized.ok) {
+            return next(
+                createHttpError(HttpCode.BAD_REQUEST, normalized.error)
             );
-            if (!normalized.ok) {
-                return next(
-                    createHttpError(HttpCode.BAD_REQUEST, normalized.error)
-                );
-            }
+        }
 
-            const conflict = await checkCustomDnsRecordConflicts(
-                domainId,
-                domain.baseDomain,
-                normalized.value,
-                undefined,
-                toInsert
-            );
-            if (conflict) {
-                return next(createHttpError(HttpCode.CONFLICT, conflict));
-            }
-
-            toInsert.push(normalized.value);
+        const conflict = await checkCustomDnsRecordConflicts(
+            domainId,
+            domain.baseDomain,
+            normalized.value
+        );
+        if (conflict) {
+            return next(createHttpError(HttpCode.CONFLICT, conflict));
         }
 
         const now = Date.now();
-        const records = await db
+        const [record] = await db
             .insert(customDnsRecords)
-            .values(
-                toInsert.map((record) => ({
-                    domainId,
-                    ...record,
-                    createdAt: now,
-                    updatedAt: now
-                }))
-            )
+            .values({
+                domainId,
+                ...normalized.value,
+                values: JSON.stringify(normalized.value.values),
+                createdAt: now,
+                updatedAt: now
+            })
             .returning();
 
-        return response<CreateCustomDnsRecordsResponse>(res, {
-            data: { records },
+        return response<CreateOrUpdateCustomDnsRecordResponse>(res, {
+            data: toCustomDnsRecordRow(record),
             success: true,
             error: false,
-            message:
-                records.length === 1
-                    ? "Custom DNS record created successfully"
-                    : "Custom DNS records created successfully",
+            message: "Custom DNS record created successfully",
             status: HttpCode.CREATED
         });
     } catch (error) {

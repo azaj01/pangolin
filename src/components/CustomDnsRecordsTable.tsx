@@ -3,7 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { ArrowUpDown, MoreHorizontal } from "lucide-react";
+import { AlertTriangle, ArrowUpDown, MoreHorizontal } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@app/components/ui/alert";
 import { DataTable, ExtendedColumnDef } from "@app/components/ui/data-table";
 import { Button } from "@app/components/ui/button";
 import { Badge } from "@app/components/ui/badge";
@@ -30,22 +31,25 @@ type Props = {
     orgId: string;
     domainId: string;
     baseDomain: string;
+    // The DNS server only serves custom records for verified domains
+    verified: boolean;
 };
 
-function formatValue(record: CustomDnsRecordRow): string {
+function formatValue(record: CustomDnsRecordRow, value: string): string {
     if (record.type === "MX") {
-        return `${record.priority} ${record.value}`;
+        return `${record.priority} ${value}`;
     }
     if (record.type === "SRV") {
-        return `${record.priority} ${record.weight} ${record.port} ${record.value}`;
+        return `${record.priority} ${record.weight} ${record.port} ${value}`;
     }
-    return record.value;
+    return value;
 }
 
 export default function CustomDnsRecordsTable({
     orgId,
     domainId,
-    baseDomain
+    baseDomain,
+    verified
 }: Props) {
     const t = useTranslations();
     const api = createApiClient(useEnvContext());
@@ -157,14 +161,19 @@ export default function CustomDnsRecordsTable({
             }
         },
         {
-            accessorKey: "value",
+            accessorKey: "values",
             friendlyName: t("value"),
             header: () => <span className="p-3">{t("value")}</span>,
             cell: ({ row }) => {
+                const record = row.original;
                 return (
-                    <span className="block max-w-md break-all">
-                        {formatValue(row.original)}
-                    </span>
+                    <div className="flex flex-col gap-1 max-w-md">
+                        {record.values.map((value) => (
+                            <span key={value} className="break-all">
+                                {formatValue(record, value)}
+                            </span>
+                        ))}
+                    </div>
                 );
             }
         },
@@ -249,6 +258,18 @@ export default function CustomDnsRecordsTable({
     return (
         <>
             <PaidFeaturesAlert tiers={tierMatrix.customDnsRecords} />
+
+            {!verified && (
+                <Alert variant="warning">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>
+                        {t("customDnsRecordsUnverifiedTitle")}
+                    </AlertTitle>
+                    <AlertDescription>
+                        {t("customDnsRecordsUnverifiedDescription")}
+                    </AlertDescription>
+                </Alert>
+            )}
 
             {deletingRecord && !isDisabled && (
                 <ConfirmDeleteDialog

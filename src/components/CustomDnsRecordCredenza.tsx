@@ -113,7 +113,7 @@ export default function CustomDnsRecordCredenza({
         form.reset({
             type: record?.type ?? "A",
             name: record?.name ?? "",
-            value: record?.value ?? "",
+            value: record?.values.join("\n") ?? "",
             ttl: record?.ttl ?? 300,
             priority: record?.priority ?? undefined,
             weight: record?.weight ?? undefined,
@@ -128,7 +128,7 @@ export default function CustomDnsRecordCredenza({
 
     async function onSubmit(data: FormValues) {
         setLoading(true);
-        // When creating, each non-empty line becomes its own record
+        // Each non-empty line is one value of the record
         const values = data.value
             .split("\n")
             .map((line) => line.trim())
@@ -137,7 +137,7 @@ export default function CustomDnsRecordCredenza({
         const payload = {
             type: data.type,
             name: data.name,
-            ...(record ? { value: data.value } : { values }),
+            values,
             ttl: data.ttl,
             priority: needsPriority ? (data.priority ?? null) : null,
             weight: isSrv ? (data.weight ?? null) : null,
@@ -296,7 +296,7 @@ export default function CustomDnsRecordCredenza({
                                     <FormItem>
                                         <FormLabel>{t("value")}</FormLabel>
                                         <FormControl>
-                                            {!record || type === "TXT" ? (
+                                            {type !== "CNAME" ? (
                                                 <Textarea
                                                     autoComplete="off"
                                                     placeholder={
@@ -314,7 +314,7 @@ export default function CustomDnsRecordCredenza({
                                                 />
                                             )}
                                         </FormControl>
-                                        {!record && (
+                                        {type !== "CNAME" && (
                                             <FormDescription>
                                                 {t(
                                                     "customDnsRecordValueDescription"

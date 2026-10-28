@@ -28,13 +28,15 @@ import HttpCode from "@server/types/HttpCode";
 import { privateConfig as config } from "#private/lib/config";
 import {
     CUSTOM_DNS_RECORD_TYPES,
-    CustomDnsRecordType
+    CustomDnsRecordType,
+    parseCustomDnsRecordValues
 } from "@server/routers/customDnsRecord/types";
 
 export const MAX_CUSTOM_DNS_RECORDS_PER_DOMAIN = 100;
-// Caps the size of any single RRset the DNS server can be made to return,
-// which bounds how much a spoofed UDP query can be amplified.
-export const MAX_CUSTOM_DNS_RECORDS_PER_RRSET = 10;
+// Caps the number of values (resource records) any single RRset the DNS
+// server can be made to return, which bounds how much a spoofed UDP query
+// can be amplified.
+export const MAX_CUSTOM_DNS_VALUES_PER_RRSET = 10;
 export const MAX_TXT_VALUE_LENGTH = 1024;
 export const MIN_TTL = 60;
 export const MAX_TTL = 86400;
@@ -47,15 +49,18 @@ const TXT_REGEX = /^[\x20-\x7e]+$/;
 
 const uint16 = z.number().int().min(0).max(65535);
 
-export const customDnsRecordValueSchema = z
-    .string()
-    .min(1)
-    .max(MAX_TXT_VALUE_LENGTH + 2); // + surrounding quotes
-
 export const customDnsRecordFieldsSchema = z.strictObject({
     name: z.string().max(253),
     type: z.enum(CUSTOM_DNS_RECORD_TYPES),
-    value: customDnsRecordValueSchema,
+    values: z
+        .array(
+            z
+                .string()
+                .min(1)
+                .max(MAX_TXT_VALUE_LENGTH + 2) // + surrounding quotes
+        )
+        .min(1)
+        .max(MAX_CUSTOM_DNS_VALUES_PER_RRSET),
     ttl: z.number().int().min(MIN_TTL).max(MAX_TTL),
     priority: uint16.nullable().optional(),
     weight: uint16.nullable().optional(),
@@ -69,7 +74,7 @@ export type NormalizedCustomDnsRecord = {
     name: string;
     fullDomain: string;
     type: CustomDnsRecordType;
-    value: string;
+    values: string[];
     ttl: number;
     priority: number | null;
     weight: number | null;
@@ -207,57 +212,46 @@ function normalizeName(
     return { ok: true, value: { name: relative, fullDomain } };
 }
 
-// Validates and normalizes a record's fields without touching the database.
-export function normalizeCustomDnsRecord(
-    input: CustomDnsRecordInput,
-    baseDomain: string
-): Result<NormalizedCustomDnsRecord> {
-    const nameResult = normalizeName(input.name, baseDomain);
-    if (!nameResult.ok) {
-        return nameResult;
-    }
-    const { name, fullDomain } = nameResult.value;
-    const isApex = name === "@";
-    const isWildcard = name.startsWith("*");
-
-    let value: string;
-    let priority: number | null = null;
-    let weight: number | null = null;
-    let port: number | null = null;
-
-    switch (input.type) {
-        case "A":
-            value = input.value.trim();
+function normalizeValue(
+    type: CustomDnsRecordType,
+    rawValue: string
+): Result<string> {
+    switch (type) {
+        case "A": {
+            const value = rawValue.trim();
             if (!isIPv4(value)) {
                 return {
                     ok: false,
-                    error: "A records require an IPv4 address"
+                    error: `"${value}" is not an IPv4 address`
                 };
             }
-            break;
-        case "AAAA":
-            value = input.value.trim().toLowerCase();
+            return { ok: true, value };
+        }
+        case "AAAA": {
+            const value = rawValue.trim().toLowerCase();
             if (!isIPv6(value)) {
                 return {
                     ok: false,
-                    error: "AAAA records require an IPv6 address"
+                    error: `"${value}" is not an IPv6 address`
                 };
             }
-            break;
+            return { ok: true, value };
+        }
         case "CNAME":
         case "NS":
         case "MX":
-        case "SRV":
-            value = normalizeHostname(input.value);
+        case "SRV": {
+            const value = normalizeHostname(rawValue);
             if (!isValidHostname(value)) {
                 return {
                     ok: false,
-                    error: `${input.type} records require a fully qualified hostname as the value`
+                    error: `${type} records require fully qualified hostnames as values`
                 };
             }
-            break;
-        case "TXT":
-            value = input.value;
+            return { ok: true, value };
+        }
+        case "TXT": {
+            let value = rawValue;
             // Strip one pair of surrounding quotes, as commonly pasted from
             // zone files and provider instructions
             if (
@@ -279,7 +273,41 @@ export function normalizeCustomDnsRecord(
                     error: "TXT values may only contain printable ASCII characters"
                 };
             }
-            break;
+            return { ok: true, value };
+        }
+    }
+}
+
+// Validates and normalizes a record's fields without touching the database.
+export function normalizeCustomDnsRecord(
+    input: CustomDnsRecordInput,
+    baseDomain: string
+): Result<NormalizedCustomDnsRecord> {
+    const nameResult = normalizeName(input.name, baseDomain);
+    if (!nameResult.ok) {
+        return nameResult;
+    }
+    const { name, fullDomain } = nameResult.value;
+    const isApex = name === "@";
+    const isWildcard = name.startsWith("*");
+
+    let priority: number | null = null;
+    let weight: number | null = null;
+    let port: number | null = null;
+
+    const values: string[] = [];
+    for (const rawValue of input.values) {
+        const valueResult = normalizeValue(input.type, rawValue);
+        if (!valueResult.ok) {
+            return valueResult;
+        }
+        if (values.includes(valueResult.value)) {
+            return {
+                ok: false,
+                error: `Duplicate value "${valueResult.value}"`
+            };
+        }
+        values.push(valueResult.value);
     }
 
     if (input.type === "CNAME") {
@@ -289,7 +317,13 @@ export function normalizeCustomDnsRecord(
                 error: "CNAME records cannot be added at the root of the domain"
             };
         }
-        if (value === fullDomain) {
+        if (values.length > 1) {
+            return {
+                ok: false,
+                error: "A CNAME record can only have one value"
+            };
+        }
+        if (values[0] === fullDomain) {
             return {
                 ok: false,
                 error: "A CNAME record cannot point to itself"
@@ -331,7 +365,7 @@ export function normalizeCustomDnsRecord(
             name,
             fullDomain,
             type: input.type,
-            value,
+            values,
             ttl: input.ttl,
             priority,
             weight,
@@ -343,15 +377,12 @@ export function normalizeCustomDnsRecord(
 
 // Checks a normalized record against everything else that lives in DNS:
 // infrastructure zones, other customers' zones, Pangolin-managed names and
-// the domain's other custom records. `pending` holds records being created
-// alongside this one in the same request, which count as existing. Returns
-// an error message, or null.
+// the domain's other custom records. Returns an error message, or null.
 export async function checkCustomDnsRecordConflicts(
     domainId: string,
     baseDomain: string,
     record: NormalizedCustomDnsRecord,
-    excludeRecordId?: number,
-    pending: NormalizedCustomDnsRecord[] = []
+    excludeRecordId?: number
 ): Promise<string | null> {
     const { fullDomain, type } = record;
 
@@ -389,20 +420,16 @@ export async function checkCustomDnsRecordConflicts(
         }
     }
 
-    const existing = [
-        ...(
-            await db
-                .select()
-                .from(customDnsRecords)
-                .where(eq(customDnsRecords.domainId, domainId))
-        ).filter((r) => r.customDnsRecordId !== excludeRecordId),
-        ...pending
-    ];
+    const existing = (
+        await db
+            .select()
+            .from(customDnsRecords)
+            .where(eq(customDnsRecords.domainId, domainId))
+    ).filter((r) => r.customDnsRecordId !== excludeRecordId);
 
-    if (
-        excludeRecordId === undefined &&
-        existing.length >= MAX_CUSTOM_DNS_RECORDS_PER_DOMAIN
-    ) {
+    // existing excludes the record being updated, so this only trips when
+    // adding a new record would go over the limit
+    if (existing.length >= MAX_CUSTOM_DNS_RECORDS_PER_DOMAIN) {
         return `A domain can have at most ${MAX_CUSTOM_DNS_RECORDS_PER_DOMAIN} custom DNS records`;
     }
 
@@ -415,20 +442,103 @@ export async function checkCustomDnsRecordConflicts(
         return "This name already has a CNAME record, which cannot be combined with other records";
     }
 
+    // One record per name and type (per priority/weight/port for MX and
+    // SRV) - more values go into that record rather than a second one, so
+    // the table shows the whole set in one place.
     const sameRRset = sameName.filter((r) => r.type === type);
-    if (sameRRset.length >= MAX_CUSTOM_DNS_RECORDS_PER_RRSET) {
-        return `A name can have at most ${MAX_CUSTOM_DNS_RECORDS_PER_RRSET} ${type} records`;
-    }
     if (
         sameRRset.some(
             (r) =>
-                r.value === record.value &&
                 r.priority === record.priority &&
                 r.weight === record.weight &&
                 r.port === record.port
         )
     ) {
-        return "An identical record already exists";
+        return `A ${type} record for this name already exists. Edit it to add more values.`;
+    }
+
+    // MX and SRV can still be split across several records (one per
+    // priority), so cap the values across all of them
+    const totalValues =
+        record.values.length +
+        sameRRset.reduce(
+            (sum, r) => sum + parseCustomDnsRecordValues(r.values).length,
+            0
+        );
+    if (totalValues > MAX_CUSTOM_DNS_VALUES_PER_RRSET) {
+        return `A name can have at most ${MAX_CUSTOM_DNS_VALUES_PER_RRSET} ${type} values`;
+    }
+
+    // Delegations: a subdomain with NS records is handed off to other
+    // nameservers, and the DNS server refers every query at or beneath it
+    // there. Nothing else may live at or beneath it except A/AAAA glue for
+    // nameservers named inside it, or it would silently stop resolving.
+    const isStrictlyBelow = (name: string, parent: string) =>
+        name.endsWith(`.${parent}`);
+    const isGlue =
+        (type === "A" || type === "AAAA") && !record.name.startsWith("*");
+
+    const enclosingCut = existing.find(
+        (r) => r.type === "NS" && isStrictlyBelow(fullDomain, r.fullDomain)
+    );
+    if (enclosingCut) {
+        if (type === "NS") {
+            return `This name is inside the delegated subdomain ${enclosingCut.fullDomain}, so it cannot be delegated again`;
+        }
+        if (!isGlue) {
+            return `This name is inside the delegated subdomain ${enclosingCut.fullDomain}, where only A and AAAA records for its nameservers can be added`;
+        }
+    }
+
+    if (type === "NS") {
+        if (sameName.some((r) => r.type !== "NS")) {
+            return "A delegated subdomain can only have NS records. Remove the other records for this name first.";
+        }
+        if (
+            existing.some(
+                (r) =>
+                    isStrictlyBelow(r.fullDomain, fullDomain) &&
+                    ((r.type !== "A" && r.type !== "AAAA") ||
+                        r.name.startsWith("*"))
+            )
+        ) {
+            return "Records exist beneath this name that would stop resolving once it is delegated. Remove them first.";
+        }
+
+        const isAtOrBelowCut = (name: string | null) =>
+            !!name &&
+            (name.toLowerCase() === fullDomain ||
+                isStrictlyBelow(name.toLowerCase(), fullDomain));
+        const resourceNames = await db
+            .select({ fullDomain: resources.fullDomain })
+            .from(resources)
+            .where(eq(resources.domainId, domainId));
+        const pageNames = await db
+            .select({ fullDomain: loginPage.fullDomain })
+            .from(loginPage)
+            .where(eq(loginPage.domainId, domainId));
+        const redirectNames = (
+            await db
+                .select({ subdomain: redirects.subdomain })
+                .from(redirects)
+                .where(
+                    and(
+                        eq(redirects.domainId, domainId),
+                        isNull(redirects.resourceId)
+                    )
+                )
+        ).map((r) => (r.subdomain ? `${r.subdomain}.${baseDomain}` : null));
+
+        if (
+            [...resourceNames, ...pageNames].some((r) =>
+                isAtOrBelowCut(r.fullDomain)
+            ) ||
+            redirectNames.some(isAtOrBelowCut)
+        ) {
+            return "Pangolin resources use names at or beneath this subdomain, so it cannot be delegated";
+        }
+    } else if (sameName.some((r) => r.type === "NS")) {
+        return "This name is delegated with NS records, so other records cannot be added to it";
     }
 
     // Pangolin answers address queries for resources, login pages and

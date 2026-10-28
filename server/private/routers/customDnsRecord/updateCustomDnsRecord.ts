@@ -21,7 +21,11 @@ import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { OpenAPITags, registry } from "@server/openApi";
 import { and, eq } from "drizzle-orm";
-import { UpdateCustomDnsRecordResponse } from "@server/routers/customDnsRecord/types";
+import {
+    CreateOrUpdateCustomDnsRecordResponse,
+    parseCustomDnsRecordValues,
+    toCustomDnsRecordRow
+} from "@server/routers/customDnsRecord/types";
 import {
     checkCustomDnsRecordConflicts,
     customDnsRecordFieldsSchema,
@@ -129,7 +133,7 @@ export async function updateCustomDnsRecord(
             {
                 name: existing.name,
                 type: existing.type,
-                value: existing.value,
+                values: parseCustomDnsRecordValues(existing.values),
                 ttl: existing.ttl,
                 priority: existing.priority,
                 weight: existing.weight,
@@ -159,6 +163,7 @@ export async function updateCustomDnsRecord(
             .update(customDnsRecords)
             .set({
                 ...normalized.value,
+                values: JSON.stringify(normalized.value.values),
                 updatedAt: Date.now()
             })
             .where(
@@ -169,8 +174,8 @@ export async function updateCustomDnsRecord(
             )
             .returning();
 
-        return response<UpdateCustomDnsRecordResponse>(res, {
-            data: record,
+        return response<CreateOrUpdateCustomDnsRecordResponse>(res, {
+            data: toCustomDnsRecordRow(record),
             success: true,
             error: false,
             message: "Custom DNS record updated successfully",

@@ -54,7 +54,7 @@ export const customDnsRecords = sqliteTable(
         type: text("type")
             .$type<"A" | "AAAA" | "CNAME" | "MX" | "NS" | "SRV" | "TXT">()
             .notNull(),
-        value: text("value").notNull(),
+        values: text("values").notNull(), // JSON array of strings, one resource record each
         ttl: integer("ttl").notNull().default(300),
         priority: integer("priority"), // MX and SRV
         weight: integer("weight"), // SRV

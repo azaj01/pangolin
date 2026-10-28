@@ -21,7 +21,10 @@ import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { OpenAPITags, registry } from "@server/openApi";
 import { and, asc, eq } from "drizzle-orm";
-import { ListCustomDnsRecordsResponse } from "@server/routers/customDnsRecord/types";
+import {
+    ListCustomDnsRecordsResponse,
+    toCustomDnsRecordRow
+} from "@server/routers/customDnsRecord/types";
 
 const paramsSchema = z.strictObject({
     orgId: z.string().nonempty(),
@@ -96,7 +99,7 @@ export async function listCustomDnsRecords(
 
         return response<ListCustomDnsRecordsResponse>(res, {
             data: {
-                records: rows.map((r) => r.record)
+                records: rows.map((r) => toCustomDnsRecordRow(r.record))
             },
             success: true,
             error: false,

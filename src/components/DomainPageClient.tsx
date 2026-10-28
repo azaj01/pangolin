@@ -106,6 +106,7 @@ export default function DomainPageClient({
                             orgId={orgId}
                             domainId={domain.domainId}
                             baseDomain={domain.baseDomain}
+                            verified={domain.verified}
                         />
                     )}
 
