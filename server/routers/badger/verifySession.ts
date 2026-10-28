@@ -720,7 +720,7 @@ export async function verifyResourceSession(
         );
 
         if (resourceSessionToken) {
-            const sessionCacheKey = `session:${resourceSessionToken}`;
+            const sessionCacheKey = `session:${resource.resourceId}:${resourceSessionToken}`;
             let resourceSession: ResourceSession | null | undefined =
                 localCache.get(sessionCacheKey);
 
@@ -734,6 +734,14 @@ export async function verifyResourceSession(
                 if (resourceSession) {
                     localCache.set(sessionCacheKey, resourceSession, 5);
                 }
+            }
+
+            // sessions are scoped to a single resource; never honor one issued for another
+            if (
+                resourceSession &&
+                resourceSession.resourceId !== resource.resourceId
+            ) {
+                resourceSession = null;
             }
 
             if (resourceSession?.isRequestToken) {
@@ -1245,7 +1253,7 @@ async function allowAccessToken(
     );
 
     if (resourceSessionToken) {
-        const sessionCacheKey = `session:${resourceSessionToken}`;
+        const sessionCacheKey = `session:${resource.resourceId}:${resourceSessionToken}`;
         let resourceSession: ResourceSession | null | undefined =
             localCache.get(sessionCacheKey);
 
@@ -1262,6 +1270,7 @@ async function allowAccessToken(
 
         if (
             resourceSession &&
+            resourceSession.resourceId === resource.resourceId &&
             !resourceSession.isRequestToken &&
             resourceSession.accessTokenId === tokenItem.accessTokenId
         ) {

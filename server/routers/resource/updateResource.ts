@@ -416,6 +416,26 @@ export async function updateResource(
     }
 }
 
+// a resource may only be assigned a shared (global) policy from its own org
+async function getAssignableResourcePolicy(
+    resourcePolicyId: number,
+    orgId: string
+) {
+    const [policy] = await db
+        .select()
+        .from(resourcePolicies)
+        .where(
+            and(
+                eq(resourcePolicies.resourcePolicyId, resourcePolicyId),
+                eq(resourcePolicies.orgId, orgId),
+                eq(resourcePolicies.scope, "global")
+            )
+        )
+        .limit(1);
+
+    return policy;
+}
+
 async function clearResourceSpecificSettings(
     resourceId: number,
     orgId: string,
@@ -513,16 +533,10 @@ async function updateHttpResource(
             );
         }
 
-        const [existingPolicy] = await db
-            .select()
-            .from(resourcePolicies)
-            .where(
-                eq(
-                    resourcePolicies.resourcePolicyId,
-                    updateData.resourcePolicyId
-                )
-            )
-            .limit(1);
+        const existingPolicy = await getAssignableResourcePolicy(
+            updateData.resourcePolicyId,
+            resource.orgId
+        );
 
         if (!existingPolicy) {
             return next(
@@ -919,6 +933,35 @@ async function updateRawResource(
 
     const updateData = parsedBody.data;
     let updatedResource: Resource | null = null;
+
+    if (updateData.resourcePolicyId != null) {
+        const isLicensed = await isLicensedOrSubscribed(
+            resource.orgId,
+            tierMatrix.resourcePolicies
+        );
+        if (!isLicensed) {
+            return next(
+                createHttpError(
+                    HttpCode.FORBIDDEN,
+                    "Resource policies are not supported on your current plan. Please upgrade to access this feature."
+                )
+            );
+        }
+
+        const existingPolicy = await getAssignableResourcePolicy(
+            updateData.resourcePolicyId,
+            resource.orgId
+        );
+
+        if (!existingPolicy) {
+            return next(
+                createHttpError(
+                    HttpCode.NOT_FOUND,
+                    `Resource policy with ID ${updateData.resourcePolicyId} not found`
+                )
+            );
+        }
+    }
 
     const [existingResource] = await db
         .select()

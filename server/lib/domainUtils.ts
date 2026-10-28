@@ -124,6 +124,16 @@ export async function validateAndConstructDomain(
 
         if (domainRes.domains.type === "ns") {
             if (subdomain) {
+                if (!isWildcard) {
+                    const parsedSubdomain =
+                        subdomainSchema.safeParse(subdomain);
+                    if (!parsedSubdomain.success) {
+                        return {
+                            success: false,
+                            error: fromError(parsedSubdomain.error).toString()
+                        };
+                    }
+                }
                 fullDomain = `${subdomain}.${domainRes.domains.baseDomain}`;
             } else {
                 fullDomain = domainRes.domains.baseDomain;

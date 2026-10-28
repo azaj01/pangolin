@@ -32,9 +32,11 @@ import {
     siteProvisioningKeyOrg,
     siteProvisioningKeys,
     alertRules,
-    targetHealthCheck
+    targetHealthCheck,
+    customDnsRecords,
+    orgDomains
 } from "@server/db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 
 /**
  * Get the maximum allowed retention days for a given tier
@@ -336,6 +338,10 @@ async function disableFeature(
                 await disableStandaloneHealthChecks(orgId);
                 break;
 
+            case TierFeature.CustomDnsRecords:
+                await disableCustomDnsRecords(orgId);
+                break;
+
             default:
                 logger.warn(
                     `Unknown feature ${feature} for org ${orgId}, skipping`
@@ -573,6 +579,25 @@ async function disableAlertingRules(orgId: string): Promise<void> {
         .where(eq(alertRules.orgId, orgId));
 
     logger.info(`Disabled all alert rules for org ${orgId}`);
+}
+
+async function disableCustomDnsRecords(orgId: string): Promise<void> {
+    // Records are kept (just stop being served) so re-subscribing restores
+    // them by re-enabling
+    await db
+        .update(customDnsRecords)
+        .set({ enabled: false, updatedAt: Date.now() })
+        .where(
+            inArray(
+                customDnsRecords.domainId,
+                db
+                    .select({ domainId: orgDomains.domainId })
+                    .from(orgDomains)
+                    .where(eq(orgDomains.orgId, orgId))
+            )
+        );
+
+    logger.info(`Disabled all custom DNS records for org ${orgId}`);
 }
 
 async function disableStandaloneHealthChecks(orgId: string): Promise<void> {

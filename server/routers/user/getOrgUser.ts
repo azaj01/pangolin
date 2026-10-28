@@ -117,7 +117,9 @@ export async function getOrgUser(
 
         const { orgId, userId } = parsedParams.data;
 
-        if (!req.userOrg) {
+        // API keys never have a userOrg; their org access and action are
+        // already checked by verifyApiKeyOrgAccess / verifyApiKeyHasAction
+        if (req.user && !req.userOrg) {
             return next(
                 createHttpError(
                     HttpCode.FORBIDDEN,
@@ -150,7 +152,7 @@ export async function getOrgUser(
             );
         }
 
-        if (req.user && user.userId !== req.userOrg.userId) {
+        if (req.user && user.userId !== req.user.userId) {
             const hasPermission = await checkUserActionPermission(
                 ActionsEnum.getOrgUser,
                 req

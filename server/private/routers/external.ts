@@ -34,8 +34,10 @@ import * as eventStreamingDestination from "#private/routers/eventStreamingDesti
 import * as alertRule from "#private/routers/alertRule";
 import * as healthChecks from "#private/routers/healthChecks";
 import * as policy from "#private/routers/policy";
+import * as customDnsRecord from "#private/routers/customDnsRecord";
 import {
     verifyOrgAccess,
+    verifyDomainAccess,
     verifyUserHasAction,
     verifyUserIsServerAdmin,
     verifySiteAccess,
@@ -261,6 +263,49 @@ authenticated.get(
     "/domain/check-namespace-availability",
     verifyValidLicense,
     domain.checkDomainNamespaceAvailability
+);
+
+authenticated.get(
+    "/org/:orgId/domain/:domainId/custom-dns-records",
+    verifyValidLicense,
+    verifyOrgAccess,
+    verifyDomainAccess,
+    verifyUserHasAction(ActionsEnum.listCustomDnsRecords),
+    customDnsRecord.listCustomDnsRecords
+);
+
+authenticated.put(
+    "/org/:orgId/domain/:domainId/custom-dns-record",
+    verifyValidLicense,
+    verifyValidSubscription(tierMatrix.customDnsRecords),
+    verifyOrgAccess,
+    verifyDomainAccess,
+    verifyLimits,
+    verifyUserHasAction(ActionsEnum.createCustomDnsRecord),
+    logActionAudit(ActionsEnum.createCustomDnsRecord),
+    customDnsRecord.createCustomDnsRecord
+);
+
+authenticated.post(
+    "/org/:orgId/domain/:domainId/custom-dns-record/:customDnsRecordId",
+    verifyValidLicense,
+    verifyValidSubscription(tierMatrix.customDnsRecords),
+    verifyOrgAccess,
+    verifyDomainAccess,
+    verifyUserHasAction(ActionsEnum.updateCustomDnsRecord),
+    logActionAudit(ActionsEnum.updateCustomDnsRecord),
+    customDnsRecord.updateCustomDnsRecord
+);
+
+authenticated.delete(
+    "/org/:orgId/domain/:domainId/custom-dns-record/:customDnsRecordId",
+    verifyValidLicense,
+    verifyValidSubscription(tierMatrix.customDnsRecords),
+    verifyOrgAccess,
+    verifyDomainAccess,
+    verifyUserHasAction(ActionsEnum.deleteCustomDnsRecord),
+    logActionAudit(ActionsEnum.deleteCustomDnsRecord),
+    customDnsRecord.deleteCustomDnsRecord
 );
 
 authenticated.put(
