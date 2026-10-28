@@ -43,6 +43,7 @@ import type {
     ListDomainsResponse
 } from "@server/routers/domain";
 import type { GetDomainResponse } from "@server/routers/domain/getDomain";
+import type { ListCustomDnsRecordsResponse } from "@server/routers/customDnsRecord/types";
 import { ListHealthChecksResponse } from "@server/routers/healthChecks/types";
 import type { ListOrgLabelsResponse } from "@server/routers/labels/types";
 import type { ListLauncherAiModelsResponse } from "@server/routers/launcher/listLauncherAiModels";
@@ -1878,6 +1879,30 @@ export const domainQueries = {
                 return res.data.data;
             },
             refetchInterval: durationToMs(10, "seconds")
+        }),
+    listCustomDnsRecords: ({
+        orgId,
+        domainId
+    }: {
+        orgId: string;
+        domainId: string;
+    }) =>
+        queryOptions({
+            queryKey: [
+                "ORG",
+                orgId,
+                "DOMAIN",
+                domainId,
+                "CUSTOM_DNS_RECORDS"
+            ] as const,
+            queryFn: async ({ signal, meta }) => {
+                const res = await meta!.api.get<
+                    AxiosResponse<ListCustomDnsRecordsResponse>
+                >(`/org/${orgId}/domain/${domainId}/custom-dns-records`, {
+                    signal
+                });
+                return res.data.data.records;
+            }
         })
 };
 

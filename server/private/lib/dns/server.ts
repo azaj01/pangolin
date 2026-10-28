@@ -30,7 +30,8 @@ import {
     sites,
     targets,
     dnsChallenge,
-    domains
+    domains,
+    customDnsRecords
 } from "@server/db";
 import { privateConfig as config } from "#private/lib/config";
 import * as dnsResolver from "dns";
@@ -50,7 +51,18 @@ type DNSRecord = {
     enabled: boolean;
 };
 
+type CustomRecord = {
+    type: string;
+    value: string;
+    ttl: number;
+    priority: number | null;
+    weight: number | null;
+    port: number | null;
+};
+
 const DNS_CACHE_TTL_SECONDS = 300;
+// Kept short so edits to custom records propagate quickly
+const CUSTOM_RECORD_CACHE_TTL_SECONDS = 60;
 
 export class AuthoritativeDNSServer {
     private cache: LocalCache = createLocalCache(10_000, DNS_CACHE_TTL_SECONDS);
@@ -162,6 +174,10 @@ export class AuthoritativeDNSServer {
         const originalQueryName = queryName;
         const queryType = question.type;
         let baseDomain: string | null;
+        // True when baseDomain is the customer zone the queried name itself
+        // lives in (not a synthetic cname-extension lookup), i.e. when
+        // user-defined custom records may apply.
+        let isCustomerZone = false;
 
         logger.info(
             `DNS Query: ${queryName} ${queryType} from ${rinfo.address}:${rinfo.port}`
@@ -284,6 +300,7 @@ export class AuthoritativeDNSServer {
                 this.sendResponse(packet, [], rinfo, false, 3, []); // NXDOMAIN rcode=3 - not authoritative
                 return;
             }
+            isCustomerZone = true;
         }
 
         // Special handling for _acme-challenge CNAME requests
@@ -338,6 +355,21 @@ export class AuthoritativeDNSServer {
         // Handle NS queries
         if (queryType === "NS") {
             logger.info(`Handling NS query for ${queryName}`);
+            // A user-defined NS record delegating a subdomain takes
+            // precedence over our own nameservers for that name
+            if (isCustomerZone && normalizedQueryName !== baseDomain) {
+                const customNsRecords = (
+                    await this.getCustomRecords(queryName, baseDomain)
+                ).filter((record) => record.type === "NS");
+                if (customNsRecords.length > 0) {
+                    const answers = this.convertCustomRecordsToAnswers(
+                        customNsRecords,
+                        originalQueryName
+                    );
+                    this.sendResponse(packet, answers, rinfo, true, 0, []);
+                    return;
+                }
+            }
             const nsRecords = await this.getNSRecords(baseDomain);
             if (nsRecords.length > 0) {
                 const answers = nsRecords.map((record) => ({
@@ -452,11 +484,42 @@ export class AuthoritativeDNSServer {
             return;
         }
 
+        // User-defined records come after everything Pangolin manages itself,
+        // so they can never shadow a resource, login page or redirect.
+        const customRecords = isCustomerZone
+            ? await this.getCustomRecords(queryName, baseDomain!)
+            : [];
+
+        if (customRecords.length > 0) {
+            let matchingRecords = customRecords.filter(
+                (record) => record.type === queryType
+            );
+            // A CNAME answers queries for every other type at its name
+            if (matchingRecords.length === 0 && queryType !== "CNAME") {
+                matchingRecords = customRecords.filter(
+                    (record) => record.type === "CNAME"
+                );
+            }
+
+            if (matchingRecords.length > 0) {
+                const answers = this.convertCustomRecordsToAnswers(
+                    matchingRecords,
+                    originalQueryName
+                );
+                logger.info(
+                    `Returning ${answers.length} custom answers for ${originalQueryName} (${queryType})`
+                );
+                this.sendResponse(packet, answers, rinfo, true, 0, []);
+                return;
+            }
+        }
+
         // Check if the domain exists (for NODATA vs NXDOMAIN)
-        const [domainExists, soaRecord] = await Promise.all([
+        const [resourceExists, soaRecord] = await Promise.all([
             this.domainExists(queryName, baseDomain!),
             this.getSOARecord(baseDomain!)
         ]);
+        const domainExists = resourceExists || customRecords.length > 0;
 
         if (!domainExists) {
             // NXDOMAIN: Name does not exist
@@ -1117,9 +1180,9 @@ export class AuthoritativeDNSServer {
                 }
 
             case "MX":
-                // MX records need priority and exchange
+                // MX records need preference and exchange
                 return {
-                    priority: record.priority,
+                    preference: record.priority,
                     exchange: record.value
                 };
 
@@ -1144,6 +1207,121 @@ export class AuthoritativeDNSServer {
             default:
                 return record.value;
         }
+    }
+
+    // User-defined records for `name`. Only served when the record's domain
+    // is the zone this query resolved to and is a verified NS delegation, so
+    // records can never surface under another org's zone or a domain whose
+    // ownership hasn't been proven. An exact name match takes precedence over
+    // a wildcard (RFC 4592).
+    private async getCustomRecords(
+        name: string,
+        zone: string
+    ): Promise<CustomRecord[]> {
+        const normalized = name.replace(/\.$/, "").toLowerCase();
+        const cacheKey = `customRecords:${zone}:${normalized}`;
+
+        const cached = this.cache.get<CustomRecord[]>(cacheKey);
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        return this.withInFlightDedup<CustomRecord[]>(cacheKey, async () => {
+            try {
+                const wildcardPattern = this.getWildcardPattern(normalized);
+                const names =
+                    wildcardPattern && wildcardPattern !== normalized
+                        ? [normalized, wildcardPattern]
+                        : [normalized];
+
+                const rows = await db
+                    .select({
+                        fullDomain: customDnsRecords.fullDomain,
+                        type: customDnsRecords.type,
+                        value: customDnsRecords.value,
+                        ttl: customDnsRecords.ttl,
+                        priority: customDnsRecords.priority,
+                        weight: customDnsRecords.weight,
+                        port: customDnsRecords.port
+                    })
+                    .from(customDnsRecords)
+                    .innerJoin(
+                        domains,
+                        eq(domains.domainId, customDnsRecords.domainId)
+                    )
+                    .where(
+                        and(
+                            inArray(customDnsRecords.fullDomain, names),
+                            eq(customDnsRecords.enabled, true),
+                            eq(domains.baseDomain, zone),
+                            eq(domains.type, "ns"),
+                            eq(domains.verified, true)
+                        )
+                    );
+
+                const exactRows = rows.filter(
+                    (row) => row.fullDomain === normalized
+                );
+                const result: CustomRecord[] = (
+                    exactRows.length > 0 ? exactRows : rows
+                ).map(({ fullDomain, ...record }) => record);
+
+                this.cache.set(
+                    cacheKey,
+                    result,
+                    CUSTOM_RECORD_CACHE_TTL_SECONDS
+                );
+                return result;
+            } catch (error) {
+                logger.error("Error querying custom DNS records:", error);
+                return [];
+            }
+        });
+    }
+
+    private convertCustomRecordsToAnswers(
+        records: CustomRecord[],
+        queryName: string
+    ): dns.Answer[] {
+        return records.map((record) => {
+            let data: any;
+            switch (record.type) {
+                case "MX":
+                    data = {
+                        preference: record.priority ?? 0,
+                        exchange: record.value
+                    };
+                    break;
+                case "SRV":
+                    data = {
+                        priority: record.priority ?? 0,
+                        weight: record.weight ?? 0,
+                        port: record.port ?? 0,
+                        target: record.value
+                    };
+                    break;
+                case "TXT": {
+                    // A single TXT character-string is at most 255 bytes;
+                    // longer values are split across several strings, which
+                    // clients concatenate. Values are printable ASCII only.
+                    const chunks: string[] = [];
+                    for (let i = 0; i < record.value.length; i += 255) {
+                        chunks.push(record.value.slice(i, i + 255));
+                    }
+                    data = chunks;
+                    break;
+                }
+                default:
+                    data = record.value;
+            }
+
+            return {
+                name: queryName,
+                type: record.type,
+                ttl: record.ttl,
+                data
+            } as dns.Answer;
+        });
     }
 
     private sendResponse(

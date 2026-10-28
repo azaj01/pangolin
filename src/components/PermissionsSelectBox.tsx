@@ -47,7 +47,11 @@ function getActionsCategories(root: boolean) {
             [t("actionUpdateOrgDomain")]: "updateOrgDomain",
             [t("actionDeleteOrgDomain")]: "deleteOrgDomain",
             [t("actionGetDNSRecords")]: "getDNSRecords",
-            [t("actionRestartOrgDomain")]: "restartOrgDomain"
+            [t("actionRestartOrgDomain")]: "restartOrgDomain",
+            [t("actionListCustomDnsRecords")]: "listCustomDnsRecords",
+            [t("actionCreateCustomDnsRecord")]: "createCustomDnsRecord",
+            [t("actionUpdateCustomDnsRecord")]: "updateCustomDnsRecord",
+            [t("actionDeleteCustomDnsRecord")]: "deleteCustomDnsRecord"
         },
 
         Redirect: {
